@@ -6,6 +6,10 @@ Different: BOT_TOKEN (Gameovermovie_bot) + STRING3 (new assistant session).
 """
 
 import sys
+# Prevent duplicate imports when plugins do 'from bot import ...'
+if __name__ == "__main__":
+    sys.modules["bot"] = sys.modules["__main__"]
+
 import io
 import asyncio
 import os
@@ -141,6 +145,12 @@ assistant = Client(
     in_memory=True,
 )
 
+# Register active clients in central core.client
+import core.client as bot_client
+bot_client.bot = bot
+bot_client.assistant = assistant
+send_styled = bot_client.send_styled
+
 # ─── Native Colored Button Support (Telegram Bot API 9.4) ────────────────────
 # pyrogram/pyrofork doesn't serialize the 'style' field through MTProto.
 # We patch InlineKeyboardButton to store style, then use the Bot HTTP API
@@ -171,37 +181,7 @@ def _markup_to_bot_api_json(markup: InlineKeyboardMarkup) -> list:
         rows.append(btn_row)
     return rows
 
-async def send_styled(chat_id: int, text: str, markup: InlineKeyboardMarkup = None, parse_mode: str = "HTML", message_id: int = None) -> dict:
-    """
-    Send or edit a message using Pyrogram client over native MTProto.
-    Ultra-fast, native, and 100% reliable without external HTTP dependency.
-    """
-    p_mode = enums.ParseMode.HTML if str(parse_mode).upper() == "HTML" else None
-    try:
-        if message_id:
-            msg = await bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text=text,
-                reply_markup=markup,
-                parse_mode=p_mode,
-                disable_web_page_preview=True
-            )
-            return {"ok": True, "result": {"message_id": msg.id if msg else message_id}}
-        else:
-            msg = await bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                reply_markup=markup,
-                parse_mode=p_mode,
-                disable_web_page_preview=True
-            )
-            return {"ok": True, "result": {"message_id": msg.id}}
-    except pyrogram.errors.MessageNotModified:
-        return {"ok": True, "result": {"message_id": message_id}}
-    except Exception as e:
-        print(f"[send_styled] Pyrogram send error to {chat_id}: {e}", flush=True)
-        return {}
+# send_styled is bound to core.client.send_styled (always uses the active running client)
 
 
 # ── Global Real-Time Telegram Event Logger for Hugging Face Terminal ─────────

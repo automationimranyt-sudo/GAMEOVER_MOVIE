@@ -41,7 +41,7 @@ ROYAL_HEADER = HEADER
 
 async def safe_edit(message, text, reply_markup=None):
     try:
-        from bot import send_styled
+        from core.client import send_styled
         if hasattr(message, "chat"):
             chat_id = message.chat.id
             message_id = message.id
@@ -147,7 +147,7 @@ async def select_vod_item(chat_id: int, item: SearchResultsItem, status_msg, use
 
 async def show_loading_animation(chat_id: int, base_text: str) -> tuple:
     """Creates a message and animates loading dots for smooth, responsive UX."""
-    from bot import send_styled
+    from core.client import send_styled
     msg_data = await send_styled(
         chat_id=chat_id,
         text=f"{HEADER}<b>{base_text}</b>"
@@ -430,7 +430,7 @@ def register(app: Client):
                 ]
             ])
             try:
-                from bot import send_styled
+                from core.client import send_styled
                 await send_styled(chat_id=owner_id, text=alert_caption, markup=alert_keyboard)
             except Exception as pm_err:
                 print(f"[Movies Engine] Failed to alert owner in PM: {pm_err}")
@@ -466,7 +466,7 @@ def register(app: Client):
                     InlineKeyboardButton("Tʀᴇɴᴅɪɴɢ Mᴏᴠɪᴇs & Sᴇʀɪᴇs", callback_data=f"VOD|trend_movies|{user_id}", style="success")
                 ]
             ])
-            from bot import send_styled
+            from core.client import send_styled
             await send_styled(chat_id=chat_id, text=caption, markup=keyboard)
             return
 
