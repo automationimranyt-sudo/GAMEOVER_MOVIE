@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-type Genre = Literal[
+Genre = Literal[
     "All",
     "Action",
     "Adventure",
@@ -34,7 +34,7 @@ type Genre = Literal[
     "Other",
 ]
 
-type Country = Literal[
+Country = Literal[
     "All",
     "United States",
     "United Kingdom",
@@ -68,7 +68,7 @@ type Country = Literal[
     "Other",
 ]
 
-type Year = Literal[
+Year = Literal[
     "All",
     "2026",
     "2025",
@@ -84,7 +84,7 @@ type Year = Literal[
     "Other",
 ]
 
-type Language = Literal[
+Language = Literal[
     "All",
     "English dub",
     "French dub",
@@ -107,7 +107,7 @@ type Language = Literal[
     "SpanishLatam dub",
 ]
 
-type SortBy = Literal[
+SortBy = Literal[
     "ForYou",
     "Hottest",
     "Latest",
