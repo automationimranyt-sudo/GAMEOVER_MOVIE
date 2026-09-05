@@ -310,8 +310,15 @@ async def main():
 
     print("\n" + "="*52)
     print("   GameOver Movie Hub Bot")
-    print("   Starting clients...")
+    print("   Starting clients & Web Server...")
     print("="*52)
+
+    # Start 24/7 web server & keep-alive dashboard (Hugging Face Spaces Port 7860)
+    try:
+        from core.web_server import start_web_server
+        await start_web_server()
+    except Exception as ws_err:
+        print(f"[WebServer] Note: {ws_err}")
 
     # Optional Hugging Face / Cloud container restart grace period delay
     start_delay = int(os.getenv("START_DELAY", "0") or "0")

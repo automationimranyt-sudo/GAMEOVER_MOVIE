@@ -18,5 +18,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application files
 COPY . .
 
+# Expose web server port for Hugging Face Spaces
+EXPOSE 7860
+
 # Run bot
 CMD ["python", "bot.py"]
