@@ -173,33 +173,34 @@ def _markup_to_bot_api_json(markup: InlineKeyboardMarkup) -> list:
 
 async def send_styled(chat_id: int, text: str, markup: InlineKeyboardMarkup = None, parse_mode: str = "HTML", message_id: int = None) -> dict:
     """
-    Send or edit a message using Bot HTTP API so that native button 'style'
-    (success/danger/primary) is preserved — Telegram Bot API 9.4+.
-    Returns the response JSON dict.
+    Send or edit a message using Pyrogram client over native MTProto.
+    Ultra-fast, native, and 100% reliable without external HTTP dependency.
     """
-    import aiohttp, json
-    token = Config.BOT_TOKEN
-    endpoint = f"https://api.telegram.org/bot{token}/"
-    payload = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": parse_mode,
-        "disable_web_page_preview": True
-    }
-    if markup:
-        payload["reply_markup"] = json.dumps({
-            "inline_keyboard": _markup_to_bot_api_json(markup)
-        })
-    method = "editMessageText" if message_id else "sendMessage"
-    if message_id:
-        payload["message_id"] = message_id
+    p_mode = enums.ParseMode.HTML if str(parse_mode).upper() == "HTML" else None
     try:
-        timeout = aiohttp.ClientTimeout(total=10.0)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(endpoint + method, json=payload) as resp:
-                return await resp.json()
+        if message_id:
+            msg = await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                reply_markup=markup,
+                parse_mode=p_mode,
+                disable_web_page_preview=True
+            )
+            return {"ok": True, "result": {"message_id": msg.id if msg else message_id}}
+        else:
+            msg = await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_markup=markup,
+                parse_mode=p_mode,
+                disable_web_page_preview=True
+            )
+            return {"ok": True, "result": {"message_id": msg.id}}
+    except pyrogram.errors.MessageNotModified:
+        return {"ok": True, "result": {"message_id": message_id}}
     except Exception as e:
-        print(f"[BotAPI] send_styled error: {e}")
+        print(f"[send_styled] Pyrogram send error to {chat_id}: {e}", flush=True)
         return {}
 
 
@@ -311,6 +312,28 @@ async def start_handler(client: Client, message: Message):
 
     # Final fallback: text only
     await message.reply_text(caption_text, parse_mode=enums.ParseMode.HTML, reply_markup=markup, disable_web_page_preview=True)
+
+
+# ── /start handler for Groups ──────────────────────────────────────────────
+@bot.on_message(filters.command("start") & filters.group)
+async def start_group_handler(client: Client, message: Message):
+    user = message.from_user
+    u_name = user.first_name if user else "Friend"
+    owner_id = Config.OWNER_ID or 6805412676
+    text = (
+        "<b>GᴀᴍᴇOᴠᴇʀ Mᴏᴠɪᴇ Hᴜʙ</b>\n\n"
+        f"Hᴇʏ {u_name}! I Aᴍ Tʜᴇ Fᴀsᴛ Aɴᴅ PᴏᴡᴇʀFᴜʟ Mᴏᴠɪᴇ Pʟᴀʏᴇʀ Bᴏᴛ.\n\n"
+        "‣ <b>Tᴏ Sᴛʀᴇᴀᴍ A Mᴏᴠɪᴇ Oʀ Sᴇʀɪᴇs:</b>\n"
+        "<code>/movie [movie name]</code>\n\n"
+        "‣ <b>Exᴀᴍᴘʟᴇ:</b>\n"
+        "<code>/movie Avengers Endgame</code>\n\n"
+        "Cʟɪᴄᴋ Tʜᴇ Bᴜᴛᴛᴏɴ Bᴇʟᴏᴡ Fᴏʀ Mᴏʀᴇ Iɴғᴏ:"
+    )
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Hᴇʟᴘ Aɴᴅ Cᴏᴍᴍᴀɴᴅs", url=f"https://t.me/{Config.BOT_USERNAME}?start=help")],
+        [InlineKeyboardButton("Tʀᴇɴᴅɪɴɢ Mᴏᴠɪᴇs", callback_data=f"VOD|trend_movies|{user.id if user else 0}")]
+    ])
+    await send_styled(chat_id=message.chat.id, text=text, markup=markup)
 
 
 # Group message auto-registration
