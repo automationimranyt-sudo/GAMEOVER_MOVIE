@@ -114,6 +114,7 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
 
 # Verify credentials before loading clients
+Config.print_diagnostics()
 Config.validate()
 
 # Initialize bot client
@@ -318,7 +319,34 @@ async def main():
         print(f"[Startup] Waiting {start_delay} seconds for previous container/session to disconnect...")
         await asyncio.sleep(start_delay)
 
-    await bot.start()
+    # Start Bot client
+    try:
+        await bot.start()
+    except pyrogram.errors.ApiIdInvalid:
+        print("\n" + "=" * 56)
+        print("[CRITICAL ERROR: 400 API_ID_INVALID]")
+        print("Telegram rejected the API_ID and API_HASH combination!")
+        print(f"Loaded API_ID:   {Config.API_ID}")
+        print(f"Loaded API_HASH: {Config.API_HASH[:4]}...{Config.API_HASH[-4:]} ({len(Config.API_HASH)} chars)")
+        print("\nPOSSIBLE REASONS:")
+        print("1. In Hugging Face Space Settings -> Secrets, API_ID or API_HASH is mistyped.")
+        print("2. The API_HASH has trailing spaces or quotes.")
+        print("3. API_ID and API_HASH were swapped in Settings.")
+        print("4. This API_ID / API_HASH was revoked or deleted on my.telegram.org.")
+        print("=" * 56 + "\n")
+        raise
+    except (pyrogram.errors.AccessTokenExpired, pyrogram.errors.AccessTokenInvalid) as tok_err:
+        print("\n" + "=" * 56)
+        print(f"[CRITICAL ERROR: BOT TOKEN INVALID / EXPIRED ({tok_err})]")
+        print(f"Loaded Bot Token prefix: {Config.BOT_TOKEN[:10]}... ({len(Config.BOT_TOKEN)} chars)")
+        print("\nHOW TO FIX:")
+        print("1. Open Telegram -> Go to @BotFather")
+        print("2. Type /mybots -> Select your bot -> API Token")
+        print("3. Revoke or copy the new Bot Token")
+        print("4. Update TOKEN in Hugging Face Space Settings -> Secrets")
+        print("=" * 56 + "\n")
+        raise
+
     bot_me = await bot.get_me()
     Config.BOT_USERNAME = bot_me.username or ""
     print(f"[Bot]       Started as: @{bot_me.username}")
@@ -328,6 +356,24 @@ async def main():
         try:
             await assistant.start()
             break
+        except pyrogram.errors.AuthKeyDuplicated as auth_err:
+            if attempt < 3:
+                print(f"[Assistant] Session still active in previous container ({auth_err}). Waiting 15s (Attempt {attempt}/3)...")
+                await asyncio.sleep(15)
+            else:
+                print("\n" + "=" * 56)
+                print("[CRITICAL ERROR: AUTH_KEY_DUPLICATED]")
+                print("STRING3 session is currently being used simultaneously elsewhere.")
+                print("Please stop duplicate containers or generate a fresh STRING3 session.")
+                print("=" * 56 + "\n")
+                raise auth_err
+        except pyrogram.errors.SessionRevoked as rev_err:
+            print("\n" + "=" * 56)
+            print("[CRITICAL ERROR: SESSION_REVOKED]")
+            print("The STRING3 session was terminated or logged out from Telegram!")
+            print("Please generate a new Pyrogram string session.")
+            print("=" * 56 + "\n")
+            raise rev_err
         except Exception as conn_err:
             err_msg = str(conn_err).lower()
             if ("auth_key_duplicated" in err_msg or "connection" in err_msg) and attempt < 3:
