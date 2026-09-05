@@ -92,13 +92,21 @@ r_mod_v2.Session.get_with_cookies = patched_get_with_cookies_v2
 orig_init_v1 = r_mod_v1.Session.__init__
 orig_init_v2 = r_mod_v2.Session.__init__
 
+GEO_HEADERS = {
+    "X-Forwarded-For": "103.255.4.1",
+    "Client-IP": "103.255.4.1",
+    "X-Real-IP": "103.255.4.1",
+    "X-Client-Info": '{"timezone":"Africa/Nairobi"}',
+}
+
 def patched_init_v1(self, *args, **kwargs):
     orig_init_v1(self, *args, **kwargs)
     from core.domain_manager import get_domain
     domain = get_domain()
     self._client.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Referer": f"https://{domain}/"
+        "Referer": f"https://{domain}/",
+        **GEO_HEADERS
     })
 
 def patched_init_v2(self, *args, **kwargs):
@@ -107,7 +115,8 @@ def patched_init_v2(self, *args, **kwargs):
     domain = get_domain()
     self._client.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Referer": f"https://{domain}/"
+        "Referer": f"https://{domain}/",
+        **GEO_HEADERS
     })
 
 r_mod_v1.Session.__init__ = patched_init_v1
@@ -378,6 +387,7 @@ async def resolve_stream_link(session: Session, item: SearchResultsItem, season:
         headers = {
             "Referer": f"https://{host}/movies/{detail_path}",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            **GEO_HEADERS
         }
         try:
             resp = await session._client.get(url, params=params, headers=headers, timeout=3.5)
@@ -397,6 +407,7 @@ async def resolve_stream_link(session: Session, item: SearchResultsItem, season:
             headers = {
                 "Referer": f"https://{host}/movies/{detail_path}",
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                **GEO_HEADERS
             }
             try:
                 resp = await session._client.get(url, params=params, headers=headers, timeout=3.5)

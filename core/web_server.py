@@ -134,6 +134,10 @@ async def handle_diag(request):
         headers = {
             "Referer": f"https://{host}/movies/{dpath}",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "X-Forwarded-For": "103.255.4.1",
+            "Client-IP": "103.255.4.1",
+            "X-Real-IP": "103.255.4.1",
+            "X-Client-Info": '{"timezone":"Africa/Nairobi"}',
         }
         # Try with session client
         try:
