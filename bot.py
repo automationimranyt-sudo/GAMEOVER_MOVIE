@@ -366,14 +366,32 @@ async def main():
     except Exception as ws_err:
         print(f"[WebServer] Note: {ws_err}")
 
-    # Optional Hugging Face / Cloud container restart grace period delay
-    start_delay = int(os.getenv("START_DELAY", "0") or "0")
+    # Fixed 25-second cloud delay so previous Hugging Face container disconnects completely
+    start_delay = int(os.getenv("START_DELAY", "25") or "25")
     if start_delay > 0:
-        print(f"[Startup] Waiting {start_delay} seconds for previous container/session to disconnect...")
+        print("\n" + "="*56, flush=True)
+        print(f"   [Cloud Startup Delay] Waiting {start_delay} seconds for previous", flush=True)
+        print("   container and Telegram session to disconnect completely...", flush=True)
+        print("="*56 + "\n", flush=True)
         await asyncio.sleep(start_delay)
 
     # Start Bot client
     try:
+        await bot.start()
+    except pyrogram.errors.FloodWait as fw:
+        wait_time = int(fw.value)
+        print("\n" + "=" * 56, flush=True)
+        print(f"[TELEGRAM FLOOD WAIT: {wait_time} SECONDS]", flush=True)
+        print("Telegram rate-limited authorizations due to multiple container restarts.", flush=True)
+        print(f"Required wait time: {wait_time}s (~{wait_time // 60} min).", flush=True)
+        print("\nINSTANT BYPASS (Bina intezaar kiye foran chalane ke liye):", flush=True)
+        print("1. Telegram mein @BotFather open karein.", flush=True)
+        print("2. /mybots -> Apna bot select karein -> API Token -> Revoke current token.", flush=True)
+        print("3. Naya token copy karke Hugging Face Space Settings -> Secrets mein 'TOKEN' update karein.", flush=True)
+        print("4. New token se FloodWait foran khatam ho jayega!", flush=True)
+        print("=" * 56 + "\n", flush=True)
+        print(f"[FloodWait] Waiting {wait_time} seconds before retrying...", flush=True)
+        await asyncio.sleep(wait_time)
         await bot.start()
     except pyrogram.errors.ApiIdInvalid:
         print("\n" + "=" * 56)
