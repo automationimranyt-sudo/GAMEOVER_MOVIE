@@ -162,46 +162,31 @@ async def handle_diag(request):
         except Exception as e:
             results[f"{host}_raw"] = {"error": str(e)}
 
-    # Stream download diagnostic test
-    first_stream_url = None
-    for host in hosts:
-        raw_res = results.get(f"{host}_raw", {})
-        body_text = raw_res.get("body", "")
-        if "streams" in body_text and "http" in body_text:
-            import json as _j
-            try:
-                p_data = _j.loads(body_text + "}]}}") if not body_text.endswith("}") else _j.loads(body_text)
-            except Exception:
-                # Extract url using regex
-                import re as _re
-                match = _re.search(r'"url":\s*"([^"]+)"', body_text)
-                if match:
-                    first_stream_url = match.group(1).replace("\\/", "/")
-                    break
-
-    # If not found via body substring, extract with session client directly
-    if not first_stream_url:
-        try:
-            url_play = "https://h5.aoneroom.com/wefeed-h5-bff/web/subject/play"
-            headers_play = {
-                "Referer": f"https://h5.aoneroom.com/movies/{dpath}",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-                "X-Forwarded-For": "103.255.4.1",
-            }
-            res_p = await session._client.get(url_play, params=params, headers=headers_play, timeout=4.0)
-            st_list = res_p.json().get("data", {}).get("streams", [])
-            if st_list:
-                first_stream_url = st_list[0].get("url")
-        except Exception as ep:
-            results["stream_fetch_err"] = str(ep)
+    # Stream download diagnostic test with full untruncated URLs
+    all_streams = []
+    try:
+        url_play = "https://h5.aoneroom.com/wefeed-h5-bff/web/subject/play"
+        headers_play = {
+            "Referer": f"https://h5.aoneroom.com/movies/{dpath}",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "X-Forwarded-For": "103.255.4.1",
+        }
+        res_p = await session._client.get(url_play, params=params, headers=headers_play, timeout=4.0)
+        all_streams = res_p.json().get("data", {}).get("streams", [])
+    except Exception as ep:
+        results["stream_fetch_err"] = str(ep)
 
     dl_tests = {}
-    if first_stream_url:
-        dl_tests["target_url"] = first_stream_url[:90]
-        # 1. aiohttp with current downloader headers & ssl=False
+    for idx, st in enumerate(all_streams):
+        s_url = st.get("url")
+        s_res = st.get("resolutions")
+        s_key = f"stream_{idx}_{s_res}p"
+        dl_tests[s_key] = {"url": s_url[:120]}
+
+        # Test A: aiohttp with current downloader headers & ssl=False (the exact bot setting)
         try:
             import aiohttp
-            conn1 = aiohttp.TCPConnector(ssl=False)
+            conn_a = aiohttp.TCPConnector(ssl=False)
             curr_headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
                 "Accept": "*/*",
@@ -212,48 +197,78 @@ async def handle_diag(request):
                 "Sec-Fetch-Mode": "no-cors",
                 "Sec-Fetch-Site": "cross-site"
             }
-            async with aiohttp.ClientSession(headers=curr_headers, connector=conn1) as s1:
-                async with s1.get(first_stream_url, timeout=aiohttp.ClientTimeout(total=5)) as resp1:
-                    dl_tests["aiohttp_current_ssl_false"] = {
-                        "status": resp1.status,
-                        "upgrade_header": resp1.headers.get("Upgrade"),
-                        "headers": dict(resp1.headers),
-                        "body": (await resp1.text())[:300]
+            async with aiohttp.ClientSession(headers=curr_headers, connector=conn_a) as sa:
+                async with sa.get(s_url, timeout=aiohttp.ClientTimeout(total=6)) as r_a:
+                    dl_tests[s_key]["aiohttp_ssl_false_themoviebox"] = {
+                        "status": r_a.status,
+                        "content_length": r_a.headers.get("Content-Length"),
+                        "body": (await r_a.text())[:150]
                     }
         except Exception as e:
-            dl_tests["aiohttp_current_ssl_false"] = {"error": str(e)}
+            dl_tests[s_key]["aiohttp_ssl_false_themoviebox"] = {"error": str(e)}
 
-        # 2. aiohttp with clean headers & default ssl
+        # Test B: httpx with clean aoneroom referer & geo headers
         try:
-            clean_headers = {
+            h_b = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
                 "Accept": "*/*",
                 "Referer": "https://h5.aoneroom.com/",
                 "X-Forwarded-For": "103.255.4.1",
+                "Range": "bytes=0-1024"
             }
-            async with aiohttp.ClientSession(headers=clean_headers) as s2:
-                async with s2.get(first_stream_url, timeout=aiohttp.ClientTimeout(total=5)) as resp2:
-                    dl_tests["aiohttp_clean_default_ssl"] = {
-                        "status": resp2.status,
-                        "upgrade_header": resp2.headers.get("Upgrade"),
-                        "headers": dict(resp2.headers),
-                        "body": (await resp2.text())[:300]
-                    }
-        except Exception as e:
-            dl_tests["aiohttp_clean_default_ssl"] = {"error": str(e)}
-
-        # 3. httpx with clean headers
-        try:
-            async with httpx.AsyncClient(verify=True, timeout=5.0) as s3:
-                resp3 = await s3.get(first_stream_url, headers=clean_headers)
-                dl_tests["httpx_clean"] = {
-                    "status": resp3.status_code,
-                    "upgrade_header": resp3.headers.get("Upgrade"),
-                    "headers": dict(resp3.headers),
-                    "bytes": len(resp3.content)
+            async with httpx.AsyncClient(verify=True, timeout=6.0) as sb:
+                r_b = await sb.get(s_url, headers=h_b)
+                dl_tests[s_key]["httpx_aoneroom_geo"] = {
+                    "status": r_b.status_code,
+                    "content_range": r_b.headers.get("content-range"),
+                    "content_length": r_b.headers.get("content-length"),
+                    "bytes_read": len(r_b.content),
+                    "body": r_b.text[:150] if r_b.status_code != 206 else "SUCCESS"
                 }
         except Exception as e:
-            dl_tests["httpx_clean"] = {"error": str(e)}
+            dl_tests[s_key]["httpx_aoneroom_geo"] = {"error": str(e)}
+
+        # Test C: httpx with videodownloader.site referer & origin (ThrottleBuster default)
+        try:
+            h_c = {
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:137.0) Gecko/20100101 Firefox/137.0",
+                "Accept": "*/*",
+                "Origin": "https://videodownloader.site/",
+                "Referer": "https://videodownloader.site/",
+                "Range": "bytes=0-1024"
+            }
+            async with httpx.AsyncClient(verify=True, timeout=6.0) as sc:
+                r_c = await sc.get(s_url, headers=h_c)
+                dl_tests[s_key]["httpx_videodownloader_site"] = {
+                    "status": r_c.status_code,
+                    "content_range": r_c.headers.get("content-range"),
+                    "content_length": r_c.headers.get("content-length"),
+                    "bytes_read": len(r_c.content),
+                    "body": r_c.text[:150] if r_c.status_code != 206 else "SUCCESS"
+                }
+        except Exception as e:
+            dl_tests[s_key]["httpx_videodownloader_site"] = {"error": str(e)}
+
+        # Test D: aiohttp with clean aoneroom referer & default ssl
+        try:
+            h_d = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                "Accept": "*/*",
+                "Referer": "https://h5.aoneroom.com/",
+                "X-Forwarded-For": "103.255.4.1",
+                "Range": "bytes=0-1024"
+            }
+            conn_d = aiohttp.TCPConnector(ssl=True)
+            async with aiohttp.ClientSession(headers=h_d, connector=conn_d) as sd:
+                async with sd.get(s_url, timeout=aiohttp.ClientTimeout(total=6)) as r_d:
+                    dl_tests[s_key]["aiohttp_clean_ssl_true"] = {
+                        "status": r_d.status,
+                        "content_range": r_d.headers.get("Content-Range"),
+                        "content_length": r_d.headers.get("Content-Length"),
+                        "body": (await r_d.text())[:150] if r_d.status != 206 else "SUCCESS"
+                    }
+        except Exception as e:
+            dl_tests[s_key]["aiohttp_clean_ssl_true"] = {"error": str(e)}
 
     results["stream_dl_tests"] = dl_tests
     return web.json_response({"auth_ok": auth_ok, "results": results})
