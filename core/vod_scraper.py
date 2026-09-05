@@ -318,7 +318,7 @@ async def fetch_tv_details(session: Session, item: SearchResultsItem):
 async def resolve_stream_link(session: Session, item: SearchResultsItem, season: int = 0, episode: int = 0, quality: str = None):
     """
     Resolve the direct streaming URL for a movie or specific TV episode based on admin quality preferences.
-    Uses multi-mirror fallback and download-endpoint fallback to guarantee 100% resolution without 403 blocks.
+    Uses authenticated MovieBox session cookies & bearer tokens, querying fastest endpoints with multi-mirror fallback.
     """
     from core.db import get_setting
     if not quality:
@@ -344,82 +344,82 @@ async def resolve_stream_link(session: Session, item: SearchResultsItem, season:
             "format": "MP4"
         }
 
-    from core.domain_manager import get_domain
-    primary_domain = get_domain()
+    # Ensure session has assigned cookies and bearer token
+    if session is None:
+        session = Session()
+    try:
+        await session.ensure_cookies_are_assigned()
+    except Exception as ce:
+        print(f"[VOD Scraper] ensure_cookies_are_assigned warning: {ce}")
+
+    # Remove any cross-origin Origin headers from session client to prevent Cloudflare CORS blocks
+    for bad_key in ["Origin", "origin"]:
+        if bad_key in session._client.headers:
+            del session._client.headers[bad_key]
+
     candidate_hosts = [
-        "fmoviesunblocked.net",
-        "movieboxhd.net",
-        "movieboxapp.in",
-        "sflix.film",
-        primary_domain,
         "h5.aoneroom.com",
+        "fmoviesunblocked.net",
+        "sflix.film",
+        "movieboxhd.net",
     ]
-    seen = set()
-    hosts = [h for h in candidate_hosts if h and not (h in seen or seen.add(h))]
 
     detail_path = getattr(item, "detailPath", "") or f"movie-{item.subjectId}"
     params = {"subjectId": item.subjectId, "se": season, "ep": episode}
 
-    import httpx
     from moviebox_api.v1.models import StreamFilesMetadata, DownloadableFilesMetadata
 
     stream_info = None
     last_err = None
 
-    # Step 1: Query play endpoint across candidate mirrors
-    for host in hosts:
+    # Step 1: Query play endpoint across candidate mirrors using authenticated session
+    for host in candidate_hosts:
         url = f"https://{host}/wefeed-h5-bff/web/subject/play"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-            "Accept": "application/json",
-            "X-Client-Info": '{"timezone":"Africa/Nairobi"}',
             "Referer": f"https://{host}/movies/{detail_path}",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         }
         try:
-            async with httpx.AsyncClient(timeout=8, follow_redirects=True) as client:
-                resp = await client.get(url, params=params, headers=headers)
-                if resp.status_code == 200 and "application/json" in resp.headers.get("content-type", ""):
-                    data = resp.json()
-                    if data.get("code") == 0 and data.get("data", {}).get("streams"):
-                        stream_info = StreamFilesMetadata(**data["data"])
-                        print(f"[VOD Scraper] Resolved '{item.title}' via {host} (play endpoint)")
-                        break
+            resp = await session._client.get(url, params=params, headers=headers, timeout=3.5)
+            if resp.status_code == 200 and "application/json" in resp.headers.get("content-type", ""):
+                data = resp.json()
+                if data.get("code") == 0 and data.get("data", {}).get("streams"):
+                    stream_info = StreamFilesMetadata(**data["data"])
+                    print(f"[VOD Scraper] Resolved '{item.title}' via {host} (play endpoint)")
+                    break
         except Exception as e:
             last_err = e
 
     # Step 2: Fallback to download endpoint if play endpoint returned no streams
     if not stream_info or not stream_info.streams:
-        for host in hosts:
+        for host in candidate_hosts:
             url = f"https://{host}/wefeed-h5-bff/web/subject/download"
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-                "Accept": "application/json",
-                "X-Client-Info": '{"timezone":"Africa/Nairobi"}',
                 "Referer": f"https://{host}/movies/{detail_path}",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
             }
             try:
-                async with httpx.AsyncClient(timeout=8, follow_redirects=True) as client:
-                    resp = await client.get(url, params=params, headers=headers)
-                    if resp.status_code == 200 and "application/json" in resp.headers.get("content-type", ""):
-                        data = resp.json()
-                        if data.get("code") == 0 and data.get("data", {}).get("downloads"):
-                            dl_meta = DownloadableFilesMetadata(**data["data"])
-                            matched_dl = None
-                            for d in dl_meta.downloads:
-                                if str(d.resolution) == str(quality):
-                                    matched_dl = d
-                                    break
-                            if not matched_dl:
-                                matched_dl = dl_meta.best_media_file
-                            if matched_dl:
-                                resolved_url = str(matched_dl.url)
-                                set_cached_vod(cache_key, resolved_url)
-                                print(f"[VOD Scraper] Resolved '{item.title}' via {host} (download fallback)")
-                                return {
-                                    "url": resolved_url,
-                                    "resolution": matched_dl.resolution,
-                                    "format": "MP4"
-                                }
+                resp = await session._client.get(url, params=params, headers=headers, timeout=3.5)
+                if resp.status_code == 200 and "application/json" in resp.headers.get("content-type", ""):
+                    data = resp.json()
+                    if data.get("code") == 0 and data.get("data", {}).get("downloads"):
+                        dl_meta = DownloadableFilesMetadata(**data["data"])
+                        matched_dl = None
+                        for d in dl_meta.downloads:
+                            if str(d.resolution) == str(quality):
+                                matched_dl = d
+                                break
+                        if not matched_dl:
+                            matched_dl = dl_meta.best_media_file
+                        if matched_dl:
+                            resolved_url = str(matched_dl.url)
+                            set_cached_vod(cache_key, resolved_url)
+                            print(f"[VOD Scraper] Resolved '{item.title}' via {host} (download fallback)")
+                            return {
+                                "url": resolved_url,
+                                "resolution": matched_dl.resolution,
+                                "format": "MP4"
+                            }
             except Exception as e:
                 last_err = e
 
