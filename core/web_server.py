@@ -101,6 +101,66 @@ async def handle_health(request):
     })
 
 
+async def handle_diag(request):
+    """Diagnostic endpoint to inspect mirror status codes directly from cloud container."""
+    sid = request.query.get("sid", "1552116708968747152")
+    dpath = request.query.get("dpath", "72-hours-hindi-iHfXJ35IEQ1")
+    se = int(request.query.get("se", "0"))
+    ep = int(request.query.get("ep", "0"))
+
+    import httpx
+    from moviebox_api.v2 import Session
+    from core.domain_manager import get_domain
+
+    domain = get_domain()
+    hosts = ["h5.aoneroom.com", "fmoviesunblocked.net", "sflix.film", "movieboxhd.net", domain]
+    results = {}
+
+    session = Session()
+    auth_ok = False
+    try:
+        await session.ensure_cookies_are_assigned()
+        auth_ok = True
+    except Exception as e:
+        results["auth_error"] = str(e)
+
+    for bad_key in ["Origin", "origin"]:
+        if bad_key in session._client.headers:
+            del session._client.headers[bad_key]
+
+    for host in hosts:
+        url = f"https://{host}/wefeed-h5-bff/web/subject/play"
+        params = {"subjectId": sid, "se": se, "ep": ep}
+        headers = {
+            "Referer": f"https://{host}/movies/{dpath}",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        }
+        # Try with session client
+        try:
+            r = await session._client.get(url, params=params, headers=headers, timeout=4.0)
+            results[f"{host}_session"] = {
+                "status": r.status_code,
+                "content_type": r.headers.get("content-type"),
+                "body": r.text[:200]
+            }
+        except Exception as e:
+            results[f"{host}_session"] = {"error": str(e)}
+
+        # Try with raw httpx client
+        try:
+            async with httpx.AsyncClient(timeout=4.0) as raw_client:
+                r2 = await raw_client.get(url, params=params, headers=headers)
+                results[f"{host}_raw"] = {
+                    "status": r2.status_code,
+                    "content_type": r2.headers.get("content-type"),
+                    "body": r2.text[:200]
+                }
+        except Exception as e:
+            results[f"{host}_raw"] = {"error": str(e)}
+
+    return web.json_response({"auth_ok": auth_ok, "results": results})
+
+
 async def start_web_server():
     """Starts the 24/7 web server and self-ping background task."""
     try:
@@ -108,6 +168,7 @@ async def start_web_server():
         app.router.add_get("/", handle_home)
         app.router.add_get("/health", handle_health)
         app.router.add_get("/ping", handle_health)
+        app.router.add_get("/diag", handle_diag)
 
         runner = web.AppRunner(app)
         await runner.setup()
