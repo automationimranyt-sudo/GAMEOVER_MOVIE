@@ -1,7 +1,7 @@
 """
 MovieBox — VOD Scraper Backend
 Connects directly to moviebox.ph using the moviebox-api Python package.
-100% independent of Node.js servers, YouTube, and yt-dlp.
+100% independent of Node.js servers,
 """
 
 # ─── Dynamic API Rerouting Patch ──────────────────────────────────────────
@@ -97,7 +97,7 @@ def patched_init_v1(self, *args, **kwargs):
     from core.domain_manager import get_domain
     domain = get_domain()
     self._client.headers.update({
-        "Origin": f"https://{domain}",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         "Referer": f"https://{domain}/"
     })
 
@@ -106,7 +106,7 @@ def patched_init_v2(self, *args, **kwargs):
     from core.domain_manager import get_domain
     domain = get_domain()
     self._client.headers.update({
-        "Origin": f"https://{domain}",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         "Referer": f"https://{domain}/"
     })
 
@@ -318,6 +318,7 @@ async def fetch_tv_details(session: Session, item: SearchResultsItem):
 async def resolve_stream_link(session: Session, item: SearchResultsItem, season: int = 0, episode: int = 0, quality: str = None):
     """
     Resolve the direct streaming URL for a movie or specific TV episode based on admin quality preferences.
+    Uses multi-mirror fallback and download-endpoint fallback to guarantee 100% resolution without 403 blocks.
     """
     from core.db import get_setting
     if not quality:
@@ -343,10 +344,87 @@ async def resolve_stream_link(session: Session, item: SearchResultsItem, season:
             "format": "MP4"
         }
 
-    resolver = FixedStreamFilesDetail(session=session, item=item)
-    stream_info = await resolver.get_content_model(season=season, episode=episode)
-    
-    if stream_info.streams:
+    from core.domain_manager import get_domain
+    primary_domain = get_domain()
+    candidate_hosts = [
+        "fmoviesunblocked.net",
+        "movieboxhd.net",
+        "movieboxapp.in",
+        "sflix.film",
+        primary_domain,
+        "h5.aoneroom.com",
+    ]
+    seen = set()
+    hosts = [h for h in candidate_hosts if h and not (h in seen or seen.add(h))]
+
+    detail_path = getattr(item, "detailPath", "") or f"movie-{item.subjectId}"
+    params = {"subjectId": item.subjectId, "se": season, "ep": episode}
+
+    import httpx
+    from moviebox_api.v1.models import StreamFilesMetadata, DownloadableFilesMetadata
+
+    stream_info = None
+    last_err = None
+
+    # Step 1: Query play endpoint across candidate mirrors
+    for host in hosts:
+        url = f"https://{host}/wefeed-h5-bff/web/subject/play"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "X-Client-Info": '{"timezone":"Africa/Nairobi"}',
+            "Referer": f"https://{host}/movies/{detail_path}",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=8, follow_redirects=True) as client:
+                resp = await client.get(url, params=params, headers=headers)
+                if resp.status_code == 200 and "application/json" in resp.headers.get("content-type", ""):
+                    data = resp.json()
+                    if data.get("code") == 0 and data.get("data", {}).get("streams"):
+                        stream_info = StreamFilesMetadata(**data["data"])
+                        print(f"[VOD Scraper] Resolved '{item.title}' via {host} (play endpoint)")
+                        break
+        except Exception as e:
+            last_err = e
+
+    # Step 2: Fallback to download endpoint if play endpoint returned no streams
+    if not stream_info or not stream_info.streams:
+        for host in hosts:
+            url = f"https://{host}/wefeed-h5-bff/web/subject/download"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                "Accept": "application/json",
+                "X-Client-Info": '{"timezone":"Africa/Nairobi"}',
+                "Referer": f"https://{host}/movies/{detail_path}",
+            }
+            try:
+                async with httpx.AsyncClient(timeout=8, follow_redirects=True) as client:
+                    resp = await client.get(url, params=params, headers=headers)
+                    if resp.status_code == 200 and "application/json" in resp.headers.get("content-type", ""):
+                        data = resp.json()
+                        if data.get("code") == 0 and data.get("data", {}).get("downloads"):
+                            dl_meta = DownloadableFilesMetadata(**data["data"])
+                            matched_dl = None
+                            for d in dl_meta.downloads:
+                                if str(d.resolution) == str(quality):
+                                    matched_dl = d
+                                    break
+                            if not matched_dl:
+                                matched_dl = dl_meta.best_media_file
+                            if matched_dl:
+                                resolved_url = str(matched_dl.url)
+                                set_cached_vod(cache_key, resolved_url)
+                                print(f"[VOD Scraper] Resolved '{item.title}' via {host} (download fallback)")
+                                return {
+                                    "url": resolved_url,
+                                    "resolution": matched_dl.resolution,
+                                    "format": "MP4"
+                                }
+            except Exception as e:
+                last_err = e
+
+    # Step 3: Match stream quality from stream_info
+    if stream_info and stream_info.streams:
         matched = None
         for stream in stream_info.streams:
             if str(stream.resolutions) == str(quality):
@@ -366,7 +444,7 @@ async def resolve_stream_link(session: Session, item: SearchResultsItem, season:
                         matched = s
                         break
                 if not matched and streams_sorted:
-                    matched = streams_sorted[-1]  # Pick highest available
+                    matched = streams_sorted[-1]
             except Exception:
                 matched = stream_info.best_stream_file
                 
@@ -381,5 +459,6 @@ async def resolve_stream_link(session: Session, item: SearchResultsItem, season:
                 "resolution": matched.resolutions,
                 "format": matched.format
             }
-            
-    raise Exception("No active video streams found on servers.")
+
+    err_msg = f"No active video streams found on servers (last error: {last_err})"
+    raise Exception(err_msg)

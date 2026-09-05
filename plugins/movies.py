@@ -1021,5 +1021,17 @@ async def trigger_movie_playback(msg_or_query, session_data: dict, season: int =
             
     except Exception as e:
         queue_manager.clear(chat_id)
-        print(f"[MOVIES Engine] Playback error: {e}")
-        await safe_edit(message, f"{HEADER}<b>Error resolving stream:</b> {str(e)}")
+        print(f"[MOVIES Engine] Playback error: {e}", flush=True)
+        movie_name = session_data.get("title", "Movie")
+        err_msg = (
+            f"{HEADER}"
+            f"<b>Pʟᴀʏʙᴀᴄᴋ Eʀʀᴏʀ</b>\n\n"
+            f"‣ <b>Mᴏᴠɪᴇ :</b> <code>{movie_name}</code>\n"
+            f"‣ <b>Sᴛᴀᴛᴜs :</b> Stream link resolve nahi ho saki.\n\n"
+            f"<i>Neeche se trending content check karein ya kuch der baad dobara try karein.</i>"
+        )
+        retry_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Tʀᴇɴᴅɪɴɢ Mᴏᴠɪᴇs", callback_data=f"VOD|trend_movies|{session_data.get('requester_id', 0)}", style="success")],
+            [InlineKeyboardButton("Cʟᴏsᴇ", callback_data="vcplay_close", style="danger")]
+        ])
+        await safe_edit(message, err_msg, reply_markup=retry_markup)
