@@ -171,13 +171,33 @@ class FixedStreamFilesDetail(StreamFilesDetail):
 import difflib
 
 
+_SHARED_SESSION: Session = None
+
+async def get_shared_session() -> Session:
+    global _SHARED_SESSION
+    if _SHARED_SESSION is None:
+        _SHARED_SESSION = Session()
+        try:
+            await _SHARED_SESSION.ensure_cookies_are_assigned()
+        except Exception as e:
+            print(f"[VOD Scraper] ensure_cookies warning: {e}")
+        if not getattr(_SHARED_SESSION, "user_info", None):
+            try:
+                await _SHARED_SESSION._fetch_user_info()
+            except Exception:
+                pass
+        for bad in ["Origin", "origin"]:
+            _SHARED_SESSION._client.headers.pop(bad, None)
+    return _SHARED_SESSION
+
+
 async def search_vod(query: str, language: str = "en"):
     """
     Search MovieBox for a query and return ranked list of SearchResultsItem objects.
     Uses fuzzy matching and score ranking so titles like 'The Witcher' or 'witcer'
     always resolve cleanly without false negatives.
     """
-    session = Session()
+    session = await get_shared_session()
     
     # Clean query for search endpoint (strip season/ep markers)
     clean_query = re.sub(r'\s+S\d+\b', '', query, flags=re.IGNORECASE)
@@ -341,21 +361,12 @@ async def resolve_stream_link(session: Session, item: SearchResultsItem, season:
         }
         quality = res_map.get(q_setting, "1080")
 
-    cache_key = f"{item.subjectId}|{season}|{episode}|{quality}"
-    from core.db import get_cached_vod, set_cached_vod
-    
-    cached_url = get_cached_vod(cache_key)
-    if cached_url:
-        print(f"[VOD Scraper] Using cached URL for '{item.title}' (S{season}E{episode} - {quality}P)")
-        return {
-            "url": cached_url,
-            "resolution": quality,
-            "format": "MP4"
-        }
+    # Always resolve live stream URL to guarantee valid signatures
+
 
     # Ensure session has assigned cookies and bearer token
     if session is None:
-        session = Session()
+        session = await get_shared_session()
     try:
         await session.ensure_cookies_are_assigned()
     except Exception as ce:
@@ -424,7 +435,6 @@ async def resolve_stream_link(session: Session, item: SearchResultsItem, season:
                             matched_dl = dl_meta.best_media_file
                         if matched_dl:
                             resolved_url = str(matched_dl.url)
-                            set_cached_vod(cache_key, resolved_url)
                             print(f"[VOD Scraper] Resolved '{item.title}' via {host} (download fallback)")
                             return {
                                 "url": resolved_url,
@@ -464,7 +474,6 @@ async def resolve_stream_link(session: Session, item: SearchResultsItem, season:
             
         if matched:
             resolved_url = str(matched.url)
-            set_cached_vod(cache_key, resolved_url)
             return {
                 "url": resolved_url,
                 "resolution": matched.resolutions,
