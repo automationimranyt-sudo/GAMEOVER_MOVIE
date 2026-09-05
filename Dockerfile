@@ -18,8 +18,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application files
 COPY . .
 
+# Environment variables for real-time live terminal streaming
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
 # Expose web server port for Hugging Face Spaces
 EXPOSE 7860
 
-# Run bot
-CMD ["python", "bot.py"]
+# Run bot unbuffered so logs stream live into Hugging Face terminal
+CMD ["python", "-u", "bot.py"]

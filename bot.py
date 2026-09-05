@@ -107,11 +107,18 @@ from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, 
 from config import Config
 from core.player import stream_manager
 
-# Set UTF-8 encoding
+# Force unbuffered UTF-8 stdout & stderr so logs stream live into Hugging Face / Docker terminals
+os.environ["PYTHONUNBUFFERED"] = "1"
 if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", line_buffering=True, write_through=True)
+    except Exception:
+        sys.stdout.reconfigure(encoding="utf-8")
 if hasattr(sys.stderr, "reconfigure"):
-    sys.stderr.reconfigure(encoding="utf-8")
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", line_buffering=True, write_through=True)
+    except Exception:
+        sys.stderr.reconfigure(encoding="utf-8")
 
 # Verify credentials before loading clients
 Config.print_diagnostics()
@@ -194,6 +201,22 @@ async def send_styled(chat_id: int, text: str, markup: InlineKeyboardMarkup = No
     except Exception as e:
         print(f"[BotAPI] send_styled error: {e}")
         return {}
+
+
+# ── Global Real-Time Telegram Event Logger for Hugging Face Terminal ─────────
+@bot.on_message(group=-1)
+async def _live_message_logger(client: Client, message: Message):
+    user = message.from_user
+    u_info = f"@{user.username}" if user and user.username else (user.first_name if user else "Unknown")
+    chat_type = "Private" if message.chat.type == enums.ChatType.PRIVATE else (message.chat.title or "Group")
+    text_snippet = message.text or message.caption or (f"[{message.media.value}]" if message.media else "[Event]")
+    print(f"[Telegram Log] [{chat_type}] {u_info} ({message.chat.id}): {text_snippet[:100]}", flush=True)
+
+@bot.on_callback_query(group=-1)
+async def _live_callback_logger(client: Client, query):
+    user = query.from_user
+    u_info = f"@{user.username}" if user and user.username else (user.first_name if user else "Unknown")
+    print(f"[Telegram Button] {u_info}: Clicked button '{query.data}'", flush=True)
 
 
 # ── /start handler for Private Chats ───────────────────────────────────────
