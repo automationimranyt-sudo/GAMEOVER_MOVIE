@@ -445,9 +445,14 @@ async def resolve_stream_link(session: Session, item: SearchResultsItem, season:
                 last_err = e
 
     # Step 3: Match stream quality from stream_info
+    # Prioritize direct CDN streams (/resource/, /cms/) which support high-speed range requests
+    # and bypass cloud datacenter IP blocks, avoiding /bt/ (BitTorrent cache nodes).
     if stream_info and stream_info.streams:
+        direct_streams = [s for s in stream_info.streams if "/bt/" not in str(getattr(s, "url", ""))]
+        pool = direct_streams if direct_streams else stream_info.streams
+
         matched = None
-        for stream in stream_info.streams:
+        for stream in pool:
             if str(stream.resolutions) == str(quality):
                 matched = stream
                 break
@@ -455,7 +460,7 @@ async def resolve_stream_link(session: Session, item: SearchResultsItem, season:
         if not matched:
             try:
                 streams_sorted = sorted(
-                    stream_info.streams,
+                    pool,
                     key=lambda s: int(s.resolutions) if str(s.resolutions).isdigit() else 0
                 )
                 req_val = int(quality) if quality.isdigit() else 1080
@@ -467,17 +472,19 @@ async def resolve_stream_link(session: Session, item: SearchResultsItem, season:
                 if not matched and streams_sorted:
                     matched = streams_sorted[-1]
             except Exception:
-                matched = stream_info.best_stream_file
+                matched = getattr(stream_info, "best_stream_file", None) or pool[-1]
                 
         if not matched:
-            matched = stream_info.best_stream_file
+            matched = getattr(stream_info, "best_stream_file", None) or stream_info.streams[0]
             
         if matched:
             resolved_url = str(matched.url)
+            fallbacks = [str(s.url) for s in pool if str(s.url) != resolved_url]
             return {
                 "url": resolved_url,
                 "resolution": matched.resolutions,
-                "format": matched.format
+                "format": matched.format,
+                "fallbacks": fallbacks
             }
 
     err_msg = f"No active video streams found on servers (last error: {last_err})"

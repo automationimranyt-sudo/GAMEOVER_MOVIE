@@ -921,6 +921,7 @@ async def trigger_movie_playback(msg_or_query, session_data: dict, season: int =
         song.season = season
         song.episode = episode
         song.clean_title = session_data.get("title", song.title)
+        song.fallback_urls = result.get("fallbacks", [])
         
         # Check if already playing - Queue if needed
         is_playing = queue_manager.is_playing(chat_id)

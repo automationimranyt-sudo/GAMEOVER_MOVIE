@@ -254,10 +254,19 @@ async def download_song(
         print(f"[Downloader] No stream URL provided for {song.title}")
         return None
 
+    urls_to_try = [target_url]
+    if hasattr(song, "fallback_urls") and song.fallback_urls:
+        for fb in song.fallback_urls:
+            if fb and fb not in urls_to_try:
+                urls_to_try.append(fb)
+
     print(f"[Downloader] Downloading VOD stream for: {song.title}")
-    ok = await download_file(target_url, output_path, progress_callback)
-    if ok and os.path.exists(output_path):
-        return output_path
+    for idx, u in enumerate(urls_to_try):
+        if idx > 0:
+            print(f"[Downloader] Primary stream failed, trying fallback stream {idx+1}/{len(urls_to_try)}...")
+        ok = await download_file(u, output_path, progress_callback)
+        if ok and os.path.exists(output_path):
+            return output_path
     return None
 
 
